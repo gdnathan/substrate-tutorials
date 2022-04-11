@@ -191,31 +191,30 @@ pub mod pallet {
 		pub fn burn(origin: OriginFor<T>, asset_id: AssetId, amount: u128) -> DispatchResult {
 			let origin = ensure_signed(origin)?;
 			let mut burned_amount = 0;
-            let mut total_supply = 0;
+			let mut total_supply = 0;
 
-            ensure!(Self::asset(asset_id).is_some(), Error::<T>::Unknown);
+			ensure!(Self::asset(asset_id).is_some(), Error::<T>::Unknown);
 
-                Account::<T>::mutate(&asset_id, &origin, |balance| {
-                    let old_balance = *balance;
-                    *balance = balance.saturating_sub(amount);
-                    burned_amount = old_balance - *balance;
-                });
+			Account::<T>::mutate(&asset_id, &origin, |balance| {
+				let old_balance = *balance;
+				*balance = balance.saturating_sub(amount);
+				burned_amount = old_balance - *balance;
+			});
 
-            Asset::<T>::try_mutate(&asset_id, |maybe_details| -> DispatchResult {
-                let details = maybe_details.as_mut().ok_or(Error::<T>::Unknown)?;
+			Asset::<T>::try_mutate(&asset_id, |maybe_details| -> DispatchResult {
+				let details = maybe_details.as_mut().ok_or(Error::<T>::Unknown)?;
 
+				details.supply = details.supply.saturating_sub(burned_amount);
+				total_supply = details.supply;
 
-                details.supply = details.supply.saturating_sub(burned_amount);
-                total_supply = details.supply;
+				Ok(())
+			})?;
 
-                Ok(())
-            })?;
-
-            Self::deposit_event(Event::<T>::Burned {
-                asset_id,
-                owner: origin,
-                total_supply
-            });
+			Self::deposit_event(Event::<T>::Burned {
+				asset_id,
+				owner: origin,
+				total_supply,
+			});
 
 			Ok(())
 		}
@@ -228,25 +227,25 @@ pub mod pallet {
 			to: T::AccountId,
 		) -> DispatchResult {
 			let from = ensure_signed(origin)?;
-            let mut transfered_amount = 0;
+			let mut transfered_amount = 0;
 
-            ensure!(Self::asset(asset_id).is_some(), Error::<T>::Unknown);
+			ensure!(Self::asset(asset_id).is_some(), Error::<T>::Unknown);
 
-            <Account<T>>::mutate(&asset_id, &from, |supply| {
-                let old_supply = *supply;
-                *supply = supply.saturating_sub(amount);
-                transfered_amount = old_supply.saturating_sub(*supply);
-            });
-            <Account<T>>::mutate(&asset_id, &to, |supply| {
-                *supply = supply.saturating_add(transfered_amount);
-            });
+			<Account<T>>::mutate(&asset_id, &from, |supply| {
+				let old_supply = *supply;
+				*supply = supply.saturating_sub(amount);
+				transfered_amount = old_supply.saturating_sub(*supply);
+			});
+			<Account<T>>::mutate(&asset_id, &to, |supply| {
+				*supply = supply.saturating_add(transfered_amount);
+			});
 
-            Self::deposit_event(Event::<T>::Transferred {
-                asset_id,
-                from,
-                to,
-                amount: transfered_amount
-            });
+			Self::deposit_event(Event::<T>::Transferred {
+				asset_id,
+				from,
+				to,
+				amount: transfered_amount,
+			});
 
 			Ok(())
 		}
