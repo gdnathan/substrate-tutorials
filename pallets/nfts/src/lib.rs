@@ -55,11 +55,23 @@ pub mod pallet {
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		/// New unique asset created
-		Created { creator: T::AccountId, asset_id: UniqueAssetId },
+		Created {
+			creator: T::AccountId,
+			asset_id: UniqueAssetId,
+		},
 		/// Some assets have been burned
-		Burned { asset_id: UniqueAssetId, owner: T::AccountId, total_supply: u128 },
+		Burned {
+			asset_id: UniqueAssetId,
+			owner: T::AccountId,
+			total_supply: u128,
+		},
 		/// Some assets have been transferred
-		Transferred { asset_id: UniqueAssetId, from: T::AccountId, to: T::AccountId, amount: u128 },
+		Transferred {
+			asset_id: UniqueAssetId,
+			from: T::AccountId,
+			to: T::AccountId,
+			amount: u128,
+		},
 	}
 
 	#[pallet::error]
@@ -76,11 +88,55 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		#[pallet::weight(0)]
 		pub fn mint(origin: OriginFor<T>, metadata: Vec<u8>, supply: u128) -> DispatchResult {
+			ensure!(supply > 0, Error::<T>::NoSupply);
+			let origin = ensure_signed(origin)?;
+			let new_unique_asset_details =
+				UniqueAssetDetails::new(origin.clone(), metadata, supply);
+			let id = Self::nonce();
+
+			<UniqueAsset<T>>::insert(id, new_unique_asset_details);
+			<Account<T>>::insert(id, &origin, supply);
+			<Nonce<T>>::mutate(|value| {
+				*value += 1;
+			});
+
+			Self::deposit_event(Event::<T>::Created {
+				creator: origin,
+				asset_id: id,
+			});
 			Ok(())
 		}
 
 		#[pallet::weight(0)]
 		pub fn burn(origin: OriginFor<T>, asset_id: UniqueAssetId, amount: u128) -> DispatchResult {
+			let origin = ensure_signed(origin)?;
+			let mut burned_amount = 0;
+			let mut total_supply = 0;
+
+			ensure!(Self::unique_asset(asset_id).is_some(), Error::<T>::Unknown);
+			ensure!(Self::account(&asset_id, &origin) > 0, Error::<T>::NotOwned);
+
+			<UniqueAsset<T>>::try_mutate(asset_id, |details| {
+				if let Some(details) = details {
+
+					<Account<T>>::mutate(&asset_id, &origin, |supply| {
+                        let old_supply = *supply;
+						*supply = supply.saturating_sub(amount);
+					    burned_amount = old_supply - *supply;
+					});
+
+					details.supply = details.supply.saturating_sub(burned_amount);
+					total_supply = details.supply;
+					return Ok(());
+				};
+				Err(Error::<T>::Unknown)
+			})?;
+
+			Self::deposit_event(Event::<T>::Burned {
+				asset_id,
+				owner: origin,
+				total_supply,
+			});
 			Ok(())
 		}
 
@@ -91,6 +147,28 @@ pub mod pallet {
 			amount: u128,
 			to: T::AccountId,
 		) -> DispatchResult {
+			let origin = ensure_signed(origin)?;
+			let unique_asset = Self::unique_asset(asset_id).ok_or(Error::<T>::Unknown)?;
+			let mut transfered_amount = 0;
+
+			ensure!(unique_asset.creator() == origin, Error::<T>::NotOwned);
+
+			<Account<T>>::mutate(&asset_id, &origin, |owned| {
+				let previously_owned = *owned;
+				*owned = owned.saturating_sub(amount);
+				transfered_amount = previously_owned - *owned;
+			});
+			<Account<T>>::mutate(&asset_id, &to, |owned| {
+				*owned = owned.saturating_add(transfered_amount);
+			});
+
+			Self::deposit_event(Event::<T>::Transferred {
+				asset_id,
+				from: origin,
+				to,
+				amount: transfered_amount,
+			});
+
 			Ok(())
 		}
 	}
